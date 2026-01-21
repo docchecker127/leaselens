@@ -25,7 +25,7 @@ def check_initials_engine(img_array):
     # --- A. COORDINATES: BOTTOM RIGHT CORNER ---
     # We scan the Bottom 15% and Right 20% of the page.
     y_start, y_end = int(h * 0.85), int(h * 0.98) 
-    x_start, x_end = int(w * 0.80), int(w * 0.98)
+    x_start, x_end = int(w * 0.60), int(w * 0.98)
     
     roi = img_array[y_start:y_end, x_start:x_end]
     
