@@ -9,28 +9,28 @@ import os
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
+# Detect if running on Cloud (Linux) or Local (Windows)
 if sys.platform.startswith('linux'):
     pytesseract.pytesseract.tesseract_cmd = 'tesseract'
 else:
-    # 🔴 VERIFY THIS PATH ON LOCAL WINDOWS
+    # 🔴 VERIFY THIS PATH matches your local installation
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # ==========================================
-# 2. VISION ENGINE (Tuned for Initials)
+# 2. VISION ENGINE (Updated for Initials)
 # ==========================================
 def check_initials_engine(img_array):
     h, w = img_array.shape
     
-    # --- COORDINATES: BOTTOM RIGHT CORNER ---
+    # --- A. COORDINATES: BOTTOM RIGHT CORNER ---
     # We scan the Bottom 15% and Right 20% of the page.
-    # Adjust these if your specific leases are different.
-    y_start, y_end = int(h * 0.75), int(h * 0.98) 
-    x_start, x_end = int(w * 0.70), int(w * 0.98)
+    y_start, y_end = int(h * 0.85), int(h * 0.98) 
+    x_start, x_end = int(w * 0.80), int(w * 0.98)
     
     roi = img_array[y_start:y_end, x_start:x_end]
     
-    # --- PRE-PROCESSING ---
-    # Thresholding to find ink
+    # --- B. PRE-PROCESSING ---
+    # Thresholding to find ink (Text becomes White, Paper becomes Black in binary)
     thresh = cv2.adaptiveThreshold(roi, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                    cv2.THRESH_BINARY_INV, 21, 10)
     
@@ -41,37 +41,53 @@ def check_initials_engine(img_array):
     
     contours, _ = cv2.findContours(clean_roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    # Debug Image (for display)
+    # Debug Image (Color)
     debug_img = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
     initials_found = False
     
     for cnt in contours:
         x, y, w_box, h_box = cv2.boundingRect(cnt)
         
-        # --- LOGIC FOR INITIALS ---
-        # 1. Initials are SMALL compared to signatures.
-        #    We look for boxes > 15px (instead of 60px).
-        is_visible = (w_box > 15 and h_box > 15)
+        # --- C. THE "INK DENSITY" CHECK (The Fix) ---
+        # We check the ORIGINAL grayscale pixels to see if this is a solid block (Logo/Header)
+        # or a scribbly line (Initial).
         
-        # 2. Solidity Check (Ink Density)
-        #    Initials are "scribbles", so they are not solid blocks.
-        box_area = w_box * h_box
-        blob_area = cv2.contourArea(cnt)
-        if box_area > 0:
-            solidity = blob_area / box_area
+        roi_chunk = roi[y:y+h_box, x:x+w_box]
+        total_pixels = w_box * h_box
+        
+        if total_pixels > 0:
+            # Count pixels darker than 100 (Ink)
+            dark_pixels = np.count_nonzero(roi_chunk < 100)
+            fill_ratio = dark_pixels / total_pixels
         else:
-            solidity = 0
+            fill_ratio = 0
             
-        is_scribble = (solidity < 0.60) # Slightly looser for small initials
+        # --- D. FILTER LOGIC ---
         
-        if is_visible and is_scribble:
-            # DRAW GREEN BOX (Found it)
+        # 1. Size Check
+        # Initials are small (>15px) but NOT huge (>200px would be a logo/picture)
+        is_visible = (w_box > 15 and h_box > 15)
+        is_not_huge = (w_box < 200 and h_box < 150)
+        
+        # 2. Density Check
+        # Initials are scribbles (< 25% ink).
+        # Logos & Headers are blocks (> 30% ink).
+        is_ink_sparse = (fill_ratio < 0.25)
+        
+        # 3. Aspect Ratio Check
+        # Initials are rarely perfectly square or super wide rectangles
+        if h_box > 0: ratio = w_box / h_box
+        else: ratio = 0
+        is_not_bar = (ratio < 5.0) # Rejects long horizontal bars
+        
+        if is_visible and is_not_huge and is_ink_sparse and is_not_bar:
+            # ✅ GREEN BOX (Actual Initials)
             cv2.rectangle(debug_img, (x, y), (x+w_box, y+h_box), (0, 255, 0), 2)
             initials_found = True
+        else:
+            # 🔴 RED BOX (Logos, Headers, Noise) - Shown for debugging
+            cv2.rectangle(debug_img, (x, y), (x+w_box, y+h_box), (0, 0, 255), 1)
             
-    # If NO initials found, we don't draw red boxes everywhere, 
-    # we just return False so the UI flags it.
-    
     return initials_found, debug_img
 
 # ==========================================
